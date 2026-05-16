@@ -7,9 +7,9 @@ from datetime import datetime, date
 from contextlib import asynccontextmanager
 
 import numpy as np
+import face_recognition
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import JSONResponse
-from deepface import DeepFace
 from supabase import create_client
 
 # --- Config ---
@@ -17,24 +17,21 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# --- Startup: pre-load model ---
+# --- Startup ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("Loading ArcFace model...")
-    DeepFace.build_model("ArcFace")
-    print("Model ready.")
+    print("Face recognition library ready.")
     yield
 
 app = FastAPI(lifespan=lifespan)
 
 # --- Helpers ---
 def get_embedding(img_path: str) -> list:
-    result = DeepFace.represent(
-        img_path=img_path,
-        model_name="ArcFace",
-        enforce_detection=False
-    )
-    return result[0]["embedding"]
+    img = face_recognition.load_image_file(img_path)
+    encs = face_recognition.face_encodings(img)
+    if not encs:
+        raise ValueError("No face detected in image")
+    return encs[0].tolist()
 
 def cosine_sim(a: list, b: list) -> float:
     a, b = np.array(a), np.array(b)
@@ -54,12 +51,10 @@ async def register(name: str = Form(...), file: UploadFile = File(...)):
     try:
         embedding = get_embedding(tmp)
 
-        # Upload photo to Supabase Storage
         with open(tmp, "rb") as f:
             photo_name = f"{name}_{uuid.uuid4()}.jpg"
             sb.storage.from_("photos").upload(photo_name, f)
 
-        # Store embedding in DB
         sb.table("embeddings").insert({
             "name": name,
             "embedding": json.dumps(embedding)
@@ -67,6 +62,11 @@ async def register(name: str = Form(...), file: UploadFile = File(...)):
 
         return {"status": "registered", "name": name}
 
+    except ValueError as e:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "detail": str(e)}
+        )
     except Exception as e:
         return JSONResponse(
             status_code=500,
@@ -84,11 +84,12 @@ async def recognize(file: UploadFile = File(...)):
     try:
         query_emb = get_embedding(tmp)
     except Exception as e:
-        return {"name": "Unknown", "confidence": 0.0, "error": str(e)}
-    finally:
         os.remove(tmp)
+        return {"name": "Unknown", "confidence": 0.0, "status": "unknown", "error": str(e)}
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
 
-    # Fetch all embeddings and find best match
     rows = sb.table("embeddings").select("name, embedding").execute().data
     best_name, best_score = "Unknown", 0.0
 
@@ -98,7 +99,6 @@ async def recognize(file: UploadFile = File(...)):
             best_score, best_name = score, row["name"]
 
     if best_score > 0.68:
-        # Deduplication: only mark attendance once per day
         today = date.today().isoformat()
         existing = sb.table("attendance")\
             .select("id")\
@@ -132,7 +132,6 @@ async def recognize(file: UploadFile = File(...)):
 
 @app.get("/attendance")
 async def get_attendance(date_filter: str = None):
-    """Get attendance records, optionally filtered by date (YYYY-MM-DD)."""
     query = sb.table("attendance").select("*").order("timestamp", desc=True)
     if date_filter:
         query = query.gte("timestamp", date_filter).lt(
