@@ -11,7 +11,7 @@ export default function Register() {
     const form = new FormData()
     form.append('name', name)
     form.append('file', file)
-    const res = await fetch('https://YOUR_APP.onrender.com/register', { method: 'POST', body: form })
+    const res = await fetch('https://sas-4cp0.onrender.com/register', { method: 'POST', body: form })
     const json = await res.json()
     setMsg(json.status === 'registered' ? `${json.name} enrolled!` : 'Error')
   }
