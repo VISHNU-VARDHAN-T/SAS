@@ -7,8 +7,9 @@ from datetime import datetime
 
 app = FastAPI()
 
-SUPABASE_URL = "https://YOUR_PROJECT.supabase.co"
-SUPABASE_KEY = "YOUR_ANON_KEY"
+SUPABASE_URL = "https://martmxqxgqnexjkhnevg.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1hcnRteHF4Z3FuZXhqa2huZXZnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY3NTM1MDMsImV4cCI6MjA5MjMyOTUwM30.hjnjuTfI9iYy4sdMqOYXS4NCTCRbzXnFO6vfOwbLyIY"
+
 sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def get_embedding(img_path):
