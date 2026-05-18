@@ -10,11 +10,12 @@ import numpy as np
 import face_recognition
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client
 
 # --- Config ---
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+SUPABASE_URL = "https://martmxqxgqnexjkhnevg.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1hcnRteHF4Z3FuZXhqa2huZXZnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY3NTM1MDMsImV4cCI6MjA5MjMyOTUwM30.hjnjuTfI9iYy4sdMqOYXS4NCTCRbzXnFO6vfOwbLyIY"
 sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- Startup ---
@@ -24,6 +25,13 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # --- Helpers ---
 def get_embedding(img_path: str) -> list:
@@ -143,5 +151,4 @@ async def get_attendance(date_filter: str = None):
 # --- Entry point ---
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000)
