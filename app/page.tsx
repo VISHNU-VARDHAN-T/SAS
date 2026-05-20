@@ -1,123 +1,167 @@
 'use client'
-import { useState, useRef } from 'react'
+import { useEffect, useState, useCallback } from 'react'
+import { createClient } from '@supabase/supabase-js'
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+const sb = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+)
 
-export default function RegisterPage() {
-  const [name, setName]       = useState('')
-  const [file, setFile]       = useState<File | null>(null)
-  const [preview, setPreview] = useState<string | null>(null)
-  const [msg, setMsg]         = useState<{ type: 'success' | 'error'; text: string } | null>(null)
-  const [loading, setLoading] = useState(false)
-  const inputRef              = useRef<HTMLInputElement>(null)
+interface Log {
+  id: number
+  name: string
+  confidence: number
+  timestamp: string
+  status: string
+  unit_id?: string
+  location?: string
+}
 
-  function onFile(f: File | null | undefined) {
-    if (!f) return
-    setFile(f)
-    const reader = new FileReader()
-    reader.onload = e => setPreview(e.target?.result as string)
-    reader.readAsDataURL(f)
-  }
+export default function Dashboard() {
+  const [logs, setLogs]       = useState<Log[]>([])
+  const [loading, setLoading] = useState(true)
+  const [lastEvent, setLastEvent] = useState<Log | null>(null)
+  const [flash, setFlash]     = useState(false)
 
-  async function submit() {
-    if (!name.trim() || !file) {
-      setMsg({ type: 'error', text: 'Please enter a name and select a photo.' })
-      return
-    }
-    setLoading(true)
-    setMsg(null)
+  const today = new Date().toISOString().split('T')[0]
 
-    const form = new FormData()
-    form.append('name', name.trim())
-    form.append('file', file)
-
-    try {
-      const res  = await fetch(`${API}/register`, { method: 'POST', body: form })
-      const json = await res.json()
-
-      if (json.status === 'registered') {
-        setMsg({ type: 'success', text: `✓ ${json.name} enrolled successfully!` })
-        setName(''); setFile(null); setPreview(null)
-      } else {
-        setMsg({ type: 'error', text: json.detail || 'Registration failed.' })
-      }
-    } catch (e) {
-      setMsg({ type: 'error', text: 'Cannot reach API server. Check your ngrok URL.' })
-    }
+  const fetchLogs = useCallback(async () => {
+    const { data } = await sb
+      .from('attendance')
+      .select('*')
+      .order('timestamp', { ascending: false })
+      .limit(100)
+    if (data) setLogs(data)
     setLoading(false)
+  }, [])
+
+  useEffect(() => {
+    fetchLogs()
+
+    const channel = sb.channel('attendance-live')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'attendance' }, payload => {
+        const row = payload.new as Log
+        setLogs(prev => [row, ...prev])
+        setLastEvent(row)
+        setFlash(true)
+        setTimeout(() => setFlash(false), 800)
+      })
+      .subscribe()
+
+    return () => { sb.removeChannel(channel) }
+  }, [fetchLogs])
+
+  const todayLogs  = logs.filter(l => l.timestamp?.startsWith(today))
+  const uniqueToday = new Set(todayLogs.map(l => l.name)).size
+  const cam1Count  = todayLogs.filter(l => l.unit_id === 'CAM_1').length
+  const cam2Count  = todayLogs.filter(l => l.unit_id === 'CAM_2').length
+
+  const fmt = (ts: string) => new Date(ts).toLocaleString('en-IN', {
+    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit'
+  })
+
+  const statusBadge = (s: string) => {
+    if (s === 'marked_present') return <span className="badge badge-present">Present</span>
+    if (s === 'already_marked') return <span className="badge badge-already">Already In</span>
+    return <span className="badge badge-unknown">Unknown</span>
   }
 
   return (
-    <div style={{ maxWidth: 520 }}>
-      <h1 className="page-title">Enroll Person</h1>
-      <p className="page-sub">Add a new face to the recognition database</p>
+    <div style={{ animation: 'fadeIn 0.4s ease' }}>
+      <style>{`@keyframes fadeIn { from { opacity:0; transform:translateY(8px) } to { opacity:1; transform:none } }`}</style>
 
-      <div className="card">
-        <div className="form-group">
-          <label className="form-label">Full Name</label>
-          <input
-            className="form-input"
-            placeholder="e.g. Ravi Kumar"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && submit()}
-          />
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 40 }}>
+        <div>
+          <h1 className="page-title">Dashboard</h1>
+          <p className="page-sub">{new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
         </div>
-
-        <div className="form-group">
-          <label className="form-label">Photo</label>
-          <div
-            className={`upload-zone ${file ? 'drag' : ''}`}
-            onClick={() => inputRef.current?.click()}
-            onDragOver={e => e.preventDefault()}
-            onDrop={e => { e.preventDefault(); onFile(e.dataTransfer.files[0]) }}
-          >
-            <input
-              ref={inputRef}
-              type="file"
-              accept="image/*"
-              style={{ display: 'none' }}
-              onChange={e => onFile(e.target.files?.[0])}
-            />
-            {preview ? (
-              <>
-                <img src={preview} alt="preview" className="preview-img" style={{ margin: '0 auto' }} />
-                <p style={{ marginTop: 10, color: 'var(--accent)', fontSize: 12 }}>
-                  {file?.name}
-                </p>
-              </>
-            ) : (
-              <>
-                <div className="upload-icon">📷</div>
-                <p style={{ color: 'var(--text)', marginBottom: 4 }}>Drop photo here or click to browse</p>
-                <p className="upload-hint">JPG, PNG — clear front-facing photo works best</p>
-              </>
-            )}
-          </div>
+        <div className="live-row">
+          <span className="live-dot" />
+          LIVE
         </div>
-
-        <button
-          className="btn btn-primary"
-          onClick={submit}
-          disabled={loading}
-          style={{ width: '100%', justifyContent: 'center', padding: '14px', fontSize: 13, letterSpacing: 2 }}
-        >
-          {loading ? 'Enrolling...' : '+ ENROLL'}
-        </button>
-
-        {msg && (
-          <div className={`alert alert-${msg.type}`}>{msg.text}</div>
-        )}
       </div>
 
-      <div className="card" style={{ marginTop: 16 }}>
-        <div className="card-label">Tips for best results</div>
-        <ul style={{ color: 'var(--muted)', fontSize: 12, lineHeight: 2, paddingLeft: 16, marginTop: 8 }}>
-          <li>Use a well-lit, front-facing photo</li>
-          <li>Only one face in the image</li>
-          <li>Avoid sunglasses or face coverings</li>
-          <li>Higher resolution = better accuracy</li>
-        </ul>
+      {/* Last detection toast */}
+      {lastEvent && (
+        <div className={`alert ${lastEvent.status === 'unknown' ? 'alert-error' : 'alert-success'}`}
+          style={{ marginBottom: 24, transition: 'all 0.3s', opacity: flash ? 1 : 0.7 }}>
+          ⚡ {lastEvent.status === 'marked_present' ? `${lastEvent.name} marked present` :
+              lastEvent.status === 'already_marked' ? `${lastEvent.name} already marked` :
+              'Unknown person detected'} — {fmt(lastEvent.timestamp)}
+        </div>
+      )}
+
+      {/* Stats */}
+      <div className="stats-grid">
+        {[
+          { label: "Today's Entries", value: todayLogs.length, color: 'var(--accent)' },
+          { label: 'Unique People',   value: uniqueToday,      color: '#fff' },
+          { label: 'CAM 1',           value: cam1Count,        color: 'var(--accent)' },
+          { label: 'CAM 2',           value: cam2Count,        color: 'var(--accent2)' },
+        ].map((s, i) => (
+          <div key={i} className="card" style={{ textAlign: 'center' }}>
+            <div className="card-label">{s.label}</div>
+            <div className="card-value" style={{ color: s.color }}>{s.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Table */}
+      <div className="table-wrap">
+        <div className="table-head">
+          <span className="table-head-title">Recent Detections</span>
+          <button className="btn btn-ghost" onClick={fetchLogs}>↻ Refresh</button>
+        </div>
+
+        {loading ? (
+          <div style={{ padding: 48, textAlign: 'center', color: 'var(--muted)' }}>Loading...</div>
+        ) : logs.length === 0 ? (
+          <div style={{ padding: 48, textAlign: 'center', color: 'var(--muted)' }}>
+            No detections yet. Cameras are watching...
+          </div>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Name</th>
+                <th>Status</th>
+                <th>Confidence</th>
+                <th>Unit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs.map(log => (
+                <tr key={log.id}>
+                  <td style={{ color: 'var(--muted)', fontSize: 12 }}>{fmt(log.timestamp)}</td>
+                  <td style={{ fontWeight: 500, color: log.name === 'Unknown' ? 'var(--warn)' : '#fff' }}>
+                    {log.name}
+                  </td>
+                  <td>{statusBadge(log.status)}</td>
+                  <td>
+                    <div className="conf-wrap">
+                      <div className="conf-bar">
+                        <div className="conf-fill" style={{
+                          width: `${(log.confidence * 100).toFixed(0)}%`,
+                          background: log.confidence > 0.85 ? 'var(--accent)' : log.confidence > 0.75 ? 'var(--accent2)' : 'var(--warn)'
+                        }} />
+                      </div>
+                      <span className="conf-text">{(log.confidence * 100).toFixed(1)}%</span>
+                    </div>
+                  </td>
+                  <td>
+                    {log.unit_id ? (
+                      <span className={`badge ${log.unit_id === 'CAM_1' ? 'badge-cam1' : 'badge-cam2'}`}>
+                        {log.unit_id}
+                      </span>
+                    ) : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   )
